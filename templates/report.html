@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report Issue - SafeWork</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='safety.png') }}" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='safety.png') }}" alt="Safety Helmet Logo">
+                <div class="logo-text">
+                    <h1>SafeWork</h1>
+                    <span class="tagline">Protecting Lives with Precision</span>
+                </div>
+            </div>
+            <button class="nav-toggle" aria-label="Toggle navigation">
+                <span class="hamburger"></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/realtime">Live Monitoring</a></li>
+                <li><a href="/about">About Us</a></li>
+                <li><a href="/report">Report Issue</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="hero-content">
+                <h2>Report a Safety Issue</h2>
+                <p>Your Voice Fuels Our Mission</p>
+                <div class="upload-card">
+                    <form id="report-form" class="report-form">
+                        <div class="form-field">
+                            <input type="text" name="name" placeholder="Your Name" required class="form-input">
+                        </div>
+                        <div class="form-field">
+                            <input type="email" name="email" placeholder="Your Email" required class="form-input">
+                        </div>
+                        <div class="form-field">
+                            <textarea name="message" placeholder="Describe the issue..." required class="form-textarea"></textarea>
+                        </div>
+                        <button type="submit">Submit Report</button>
+                    </form>
+                    <div id="spinner" class="spinner" aria-hidden="true"></div>
+                    <div id="feedback" class="feedback"></div> <!-- New feedback div -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>© 2025 SafeWork Team. All rights reserved.</p>
+            <ul class="footer-links">
+                <li><a href="/about">About</a></li>
+                <li><a href="/report">Contact</a></li>
+                <li><a href="#">Privacy Policy</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        const navToggle = document.querySelector('.nav-toggle');
+        const navLinks = document.querySelector('.nav-links');
+        navToggle.addEventListener('click', () => {
+            navLinks.classList.toggle('active');
+        });
+
+        document.getElementById('report-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const spinner = document.getElementById('spinner');
+            const feedback = document.getElementById('feedback');
+
+            spinner.classList.add('visible');
+            feedback.innerHTML = ''; // Clear previous feedback
+
+            try {
+                const response = await fetch('/report', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                spinner.classList.remove('visible');
+                if (response.ok) {
+                    feedback.innerHTML = '<p class="success fade-in">Report submitted successfully</p>';
+                    e.target.reset(); // Clear form
+                } else {
+                    feedback.innerHTML = '<p class="error fade-in">Report not submitted, try again.</p>';
+                }
+            } catch (error) {
+                spinner.classList.remove('visible');
+                feedback.innerHTML = '<p class="error fade-in">Report not submitted, try again.</p>';
+            }
+        });
+    </script>
+</body>
+</html>

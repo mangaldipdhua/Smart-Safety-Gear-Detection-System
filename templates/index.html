@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeWork PPE Detection</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='safety.png') }}" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='safety.png') }}" alt="Safety Helmet Logo">
+                <div class="logo-text">
+                    <h1>SafeWork</h1>
+                    <span class="tagline">Protecting Lives with Precision</span>
+                </div>
+            </div>
+            <button class="nav-toggle" aria-label="Toggle navigation">
+                <span class="hamburger"></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/realtime">Live Monitoring</a></li>
+                <li><a href="/about">About Us</a></li>
+                <li><a href="/report">Report Issue</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="hero-content">
+                <h2>PPE Detection</h2>
+                <p>Upload an image or video to check PPE compliance with AI.</p>
+                <div class="upload-card">
+                    <form id="upload-form" enctype="multipart/form-data">
+                        <label for="file-input" class="custom-file-upload">
+                            <span>Select File</span>
+                            <input type="file" name="file" id="file-input" accept="image/*,video/*" required aria-label="Upload image or video">
+                        </label>
+                        <button type="submit">Analyze</button>
+                    </form>
+                    <div id="spinner" class="spinner" aria-hidden="true"></div>
+                </div>
+                <div id="result" class="result-card" aria-live="polite">
+                    <h3>Results</h3>
+                    <div id="output"></div>
+                    <a id="download-link" href="#" download class="download-btn">Download Result</a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>© 2025 SafeWork Team. All rights reserved.</p>
+            <ul class="footer-links">
+                <li><a href="/about">About</a></li>
+                <li><a href="/report">Contact</a></li>
+                <li><a href="#">Privacy Policy</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        const navToggle = document.querySelector('.nav-toggle');
+        const navLinks = document.querySelector('.nav-links');
+        navToggle.addEventListener('click', () => {
+            navLinks.classList.toggle('active');
+        });
+
+        document.getElementById('upload-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const spinner = document.getElementById('spinner');
+            const output = document.getElementById('output');
+            const downloadLink = document.getElementById('download-link');
+            const resultCard = document.getElementById('result');
+
+            spinner.classList.add('visible');
+            output.innerHTML = '';
+            downloadLink.classList.remove('visible');
+            resultCard.classList.remove('visible');
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                if (result.image) {
+                    output.innerHTML = `<img src="${result.image}" alt="Detection Result" class="fade-in">`;
+                    downloadLink.href = result.image;
+                    downloadLink.classList.add('visible');
+                    resultCard.classList.add('visible');
+                } else if (result.video) {
+                    output.innerHTML = `<video width="100%" controls class="fade-in"><source src="${result.video}" type="video/mp4">Your browser does not support the video tag.</video>`;
+                    downloadLink.href = result.video;
+                    downloadLink.download = result.video.split('/').pop();
+                    downloadLink.classList.add('visible');
+                    resultCard.classList.add('visible');
+                    output.querySelector('video').load();
+                } else {
+                    output.innerHTML = `<p class="error">${result.error}</p>`;
+                    resultCard.classList.add('visible');
+                }
+            } catch (error) {
+                output.innerHTML = `<p class="error">An error occurred: ${error.message}. Please try again.</p>`;
+                resultCard.classList.add('visible');
+            } finally {
+                spinner.classList.remove('visible');
+            }
+        });
+    </script>
+</body>
+</html>

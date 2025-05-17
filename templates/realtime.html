@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live PPE Monitoring - SafeWork</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='safety.png') }}" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='safety.png') }}" alt="Safety Helmet Logo">
+                <div class="logo-text">
+                    <h1>SafeWork</h1>
+                    <span class="tagline">Protecting Lives with Precision</span>
+                </div>
+            </div>
+            <button class="nav-toggle" aria-label="Toggle navigation">
+                <span class="hamburger"></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/realtime">Live Monitoring</a></li>
+                <li><a href="/about">About Us</a></li>
+                <li><a href="/report">Report Issue</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="hero-content">
+                <h2>Live PPE Monitoring</h2>
+                <p>Track safety compliance in real-time with AI-powered detection.</p>
+                <div class="realtime-card">
+                    <div class="video-container">
+                        <div class="video-wrapper">
+                            <h3>Raw Feed</h3>
+                            <video id="raw-feed" autoplay playsinline muted></video>
+                        </div>
+                        <div class="video-wrapper">
+                            <h3>Processed Feed</h3>
+                            <img id="processed-feed" alt="Processed Detection Feed">
+                        </div>
+                    </div>
+                    <button id="switch-camera">Switch Camera</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>© 2025 SafeWork Team. All rights reserved.</p>
+            <ul class="footer-links">
+                <li><a href="/about">About</a></li>
+                <li><a href="/report">Contact</a></li>
+                <li><a href="#">Privacy Policy</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        const socket = io.connect(location.protocol + '//' + location.host, {
+            transports: ['websocket'],
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
+        });
+        const rawFeed = document.getElementById('raw-feed');
+        const processedFeed = document.getElementById('processed-feed');
+        const switchButton = document.getElementById('switch-camera');
+        let facingMode = 'user';
+        let canvas, ctx, video;
+        let lastFrameTime = 0;
+        const FRAME_INTERVAL = 500;
+
+        socket.on('connect', () => {
+            console.log('Connected to WebSocket server');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from WebSocket server');
+        });
+
+        socket.on('processed_frame', (data) => {
+            console.log('Received processed frame:', data.substring(0, 50));
+            processedFeed.src = data;
+            processedFeed.onerror = () => console.error('Failed to load image data in <img>');
+            processedFeed.onload = () => console.log('Processed image loaded successfully');
+        });
+
+        async function startLocalCamera() {
+            try {
+                if (video && video.srcObject) {
+                    video.srcObject.getTracks().forEach(track => track.stop());
+                }
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode, width: { ideal: 640 }, height: { ideal: 480 } }
+                });
+                video = rawFeed; // Use the <video> element for raw feed
+                video.srcObject = stream;
+
+                video.onloadedmetadata = () => {
+                    canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx = canvas.getContext('2d');
+                    console.log('Camera started:', facingMode);
+                    processLocalFeed();
+                };
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                alert('Could not access camera. Check permissions.');
+            }
+        }
+
+        function processLocalFeed(timestamp) {
+            if (timestamp - lastFrameTime >= FRAME_INTERVAL) {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const frameData = canvas.toDataURL('image/jpeg', 0.7);
+                socket.emit('frame', frameData);
+                console.log('Frame sent to server');
+                lastFrameTime = timestamp;
+            }
+            requestAnimationFrame(processLocalFeed);
+        }
+
+        switchButton.addEventListener('click', () => {
+            facingMode = facingMode === 'user' ? 'environment' : 'user';
+            switchButton.textContent = facingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera';
+            startLocalCamera();
+        });
+
+        startLocalCamera();
+
+        const navToggle = document.querySelector('.nav-toggle');
+        const navLinks = document.querySelector('.nav-links');
+        navToggle.addEventListener('click', () => {
+            navLinks.classList.toggle('active');
+        });
+    </script>
+</body>
+</html>

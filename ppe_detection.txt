@@ -1,0 +1,1605 @@
+Introduction
+There have been various accidents in construction sites, due to the lack of safety equipments for workers. The aim of this project was to detect PPE on a worker, which can be further used for tracking and triggerring alarm (safety monitoring) in future. We use the dataset provided by Roboflow on Construction Site Safety Image Dataset.
+
+For easier use the dataset is already uploaded here: Kaggle Dataset.
+
+The dataset consists of 2801 image samples with labels in YoloV8 format. These images are split into train: 2605, valid: 114 and test: 82 sets. Each folder consists of images and labels folders.
+
+There are 10 classes to detect from the dataset:
+
+'Hardhat', 'Mask', 'NO-Hardhat', 'NO-Mask', 'NO-Safety Vest', 'Person', 'Safety Cone', 'Safety Vest', 'machinery', 'vehicle'
+
+
+Setup
+The code was run on Kaggle, with a P100 GPU. We installed the ultralytics library by Ultralytics to run YoloV8 custom object detection on the dataset.
+
+For more information check out this notebook: Check yo'self before you wreck yo'self - CSS EDA.
+
+Note: This repository contains all the results, visualizations and best model after custom training on the dataset.
+
+File Hierarchy
+data folder consists of the yaml file required for training. It also contains 3 folders train, valid and test. Each of these folders have 2 subfolders images (with .jpg files) and labels (with .txt annotations).
+results folder consists of the prediction results of the model, confusion matrix plot, visualizations of the train and valid batches and PR curves.
+models folder consists of 2 models, yolov8n.pt which is the pre-trained model on COCO128.yaml and best.pt which is the custom trained yolov8n model on our dataset.
+source_files folder consists of videos and images for evaluation of our custom trained model.
+output folder consists of output produced by our custom object detection model after 100 epochs of training.
+
+Results
+The training of YoloV8n model was done for 100 epochs and was completed in 2.719 hours. After training, we get the following results:
+
+
+
+
+
+-----------------------------------------------------------------------------code for the website----------------------------------------------------
+
+app.py
+
+from flask import Flask, render_template, request, send_from_directory, jsonify
+from flask_socketio import SocketIO, emit
+import os
+import cv2
+import torch
+from ultralytics import YOLO
+import shutil
+import logging
+import base64
+import numpy as np
+from io import BytesIO
+import smtplib
+from email.mime.text import MIMEText
+
+app = Flask(__name__)
+socketio = SocketIO(app, async_mode='eventlet')
+
+UPLOAD_FOLDER = 'static/uploads'
+RESULT_FOLDER = 'static/results'
+MODEL_PATH = 'Model/best.pt'
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['RESULT_FOLDER'] = RESULT_FOLDER
+
+# Email configuration for authentication
+SMTP_EMAIL = 'saptarshi0777@gmail.com'  # Your Gmail account for SMTP authentication
+EMAIL_PASSWORD = 'rwif bbkf hmrw mcor'  # Your Gmail App Password
+EMAIL_RECEIVER = 'saptarshi0777@gmail.com'  # Receiver for reports
+
+# Setup logging with DEBUG level for detailed output
+logging.basicConfig(level=logging.DEBUG)
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(RESULT_FOLDER, exist_ok=True)
+
+model = YOLO(MODEL_PATH)
+
+def cleanup_folders():
+    for folder in [UPLOAD_FOLDER, RESULT_FOLDER]:
+        if os.path.exists(folder):
+            shutil.rmtree(folder)
+        os.makedirs(folder, exist_ok=True)
+
+def send_email(name, user_email, message):
+    """Send report email to saptarshi0777@gmail.com and a reply to the user."""
+    smtp_server = None
+    try:
+        # Initialize SMTP connection
+        smtp_server = smtplib.SMTP('smtp.gmail.com', 587)
+        smtp_server.starttls()
+        smtp_server.login(SMTP_EMAIL, EMAIL_PASSWORD)
+        logging.debug("SMTP login successful")
+
+        # 1. Send the report email to saptarshi0777@gmail.com
+        subject_report = f"SafeWork Safety Report from {name}"
+        body_report = f"Name: {name}\nEmail: {user_email}\nMessage: {message}"
+        msg_report = MIMEText(body_report)
+        msg_report['Subject'] = subject_report
+        msg_report['From'] = SMTP_EMAIL  # Use authenticated email as sender
+        msg_report['To'] = EMAIL_RECEIVER
+        msg_report['Reply-To'] = user_email  # Replies go to the user
+
+        smtp_server.send_message(msg_report)
+        logging.info(f"Report email sent successfully to {EMAIL_RECEIVER} with Reply-To: {user_email}")
+
+        # 2. Send a greeting reply email to the user
+        subject_reply = "Thank You for Your SafeWork Report!"
+        body_reply = (
+            f"Dear {name},\n\n"
+            "Thank you for submitting your safety report to SafeWork. We’ve received your message and will review it soon. "
+            "Your input helps us ensure safer work environments for everyone.\n\n"
+            "If you have any further questions or concerns, feel free to reply to this email.\n\n"
+            "Best regards,\n"
+            "The SafeWork Team"
+        )
+        msg_reply = MIMEText(body_reply)
+        msg_reply['Subject'] = subject_reply
+        msg_reply['From'] = SMTP_EMAIL  # Sent from your Gmail account
+        msg_reply['To'] = user_email
+        msg_reply['Reply-To'] = SMTP_EMAIL  # Replies go back to SafeWork
+
+        smtp_server.send_message(msg_reply)
+        logging.info(f"Reply email sent successfully to {user_email}")
+
+    except smtplib.SMTPRecipientsRefused as e:
+        logging.error(f"Recipient refused: {str(e)} - Failed to send to {user_email}")
+        raise Exception(f"Failed to send reply email: Invalid or rejected email address {user_email}")
+    except smtplib.SMTPAuthenticationError as e:
+        logging.error(f"SMTP authentication error: {str(e)}")
+        raise Exception("SMTP authentication failed. Check your email and App Password.")
+    except smtplib.SMTPException as e:
+        logging.error(f"SMTP error: {str(e)}")
+        raise Exception(f"SMTP error occurred: {str(e)}")
+    except Exception as e:
+        logging.error(f"Unexpected error: {str(e)}")
+        raise
+    finally:
+        if smtp_server:
+            smtp_server.quit()
+            logging.debug("SMTP connection closed")
+
+@app.route('/')
+def index():
+    cleanup_folders()
+    return render_template('index.html')
+
+@app.route('/about')
+def about():
+    return render_template('about.html')
+
+@app.route('/realtime')
+def realtime():
+    return render_template('realtime.html')
+
+@app.route('/report', methods=['GET', 'POST'])
+def report():
+    if request.method == 'POST':
+        name = request.form['name']
+        email = request.form['email']  # User's email from form
+        message = request.form['message']
+        logging.info(f"Report received: {name}, {email}, {message}")
+        
+        try:
+            send_email(name, email, message)
+            return jsonify({"message": "Report submitted successfully! Check your email for confirmation."}), 200
+        except Exception as e:
+            logging.error(f"Report submission failed: {str(e)}")
+            return jsonify({"error": "Report not submitted, try again."}), 500
+            
+    return render_template('report.html')
+
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+
+    filename = file.filename
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(file_path)
+
+    try:
+        if filename.endswith(('.png', '.jpg', '.jpeg')):
+            results = model(file_path)
+            result_img_path = os.path.join(app.config['RESULT_FOLDER'], 'result_' + filename)
+            results[0].save(result_img_path)
+            return jsonify({"image": f"/results/result_{filename}"})
+
+        elif filename.endswith(('.mp4', '.avi', '.mov')):
+            cap = cv2.VideoCapture(file_path)
+            if not cap.isOpened():
+                return jsonify({"error": "Failed to open video"}), 500
+            
+            fourcc = cv2.VideoWriter_fourcc(*'H264')
+            output_video_path = os.path.join(app.config['RESULT_FOLDER'], 'output_' + filename.rsplit('.', 1)[0] + '.mp4')
+            out = cv2.VideoWriter(output_video_path, fourcc, cap.get(cv2.CAP_PROP_FPS),
+                                  (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))))
+
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                results = model(frame)
+                annotated_frame = results[0].plot()
+                out.write(annotated_frame)
+
+            cap.release()
+            out.release()
+            if os.path.exists(output_video_path):
+                return jsonify({"video": f"/results/output_{filename.rsplit('.', 1)[0]}.mp4"})
+            else:
+                return jsonify({"error": "Video processing failed"}), 500
+
+        else:
+            return jsonify({"error": "Invalid file format"}), 400
+
+    except Exception as e:
+        logging.error(f"Error processing file: {str(e)}")
+        return jsonify({"error": f"Processing failed: {str(e)}"}), 500
+
+@app.route('/results/<filename>')
+def get_result(filename):
+    return send_from_directory(app.config['RESULT_FOLDER'], filename)
+
+@socketio.on('connect')
+def handle_connect():
+    logging.info("Client connected to WebSocket")
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logging.info("Client disconnected from WebSocket")
+
+@socketio.on('frame')
+def handle_frame(data):
+    try:
+        img_data = base64.b64decode(data.split(',')[1])
+        np_img = np.frombuffer(img_data, np.uint8)
+        frame = cv2.imdecode(np_img, cv2.IMREAD_COLOR)
+
+        if frame is None:
+            logging.error("Failed to decode frame")
+            return
+
+        frame = cv2.resize(frame, (640, 480))
+        results = model(frame)
+        annotated_frame = results[0].plot()
+
+        ret, buffer = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        if not ret:
+            logging.error("Failed to encode processed frame")
+            return
+
+        frame_base64 = base64.b64encode(buffer).decode('utf-8')
+        processed_data = f'data:image/jpeg;base64,{frame_base64}'
+        emit('processed_frame', processed_data)
+    except Exception as e:
+        logging.error(f"Error processing frame: {str(e)}")
+
+if __name__ == '__main__':
+    socketio.run(app, debug=True, host='127.0.0.1', port=5000)
+
+
+
+index.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SafeWork PPE Detection</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='safety.png') }}" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='safety.png') }}" alt="Safety Helmet Logo">
+                <div class="logo-text">
+                    <h1>SafeWork</h1>
+                    <span class="tagline">Protecting Lives with Precision</span>
+                </div>
+            </div>
+            <button class="nav-toggle" aria-label="Toggle navigation">
+                <span class="hamburger"></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/realtime">Live Monitoring</a></li>
+                <li><a href="/about">About Us</a></li>
+                <li><a href="/report">Report Issue</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="hero-content">
+                <h2>PPE Detection</h2>
+                <p>Upload an image or video to check PPE compliance with AI.</p>
+                <div class="upload-card">
+                    <form id="upload-form" enctype="multipart/form-data">
+                        <label for="file-input" class="custom-file-upload">
+                            <span>Select File</span>
+                            <input type="file" name="file" id="file-input" accept="image/*,video/*" required aria-label="Upload image or video">
+                        </label>
+                        <button type="submit">Analyze</button>
+                    </form>
+                    <div id="spinner" class="spinner" aria-hidden="true"></div>
+                </div>
+                <div id="result" class="result-card" aria-live="polite">
+                    <h3>Results</h3>
+                    <div id="output"></div>
+                    <a id="download-link" href="#" download class="download-btn">Download Result</a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>© 2025 SafeWork Team. All rights reserved.</p>
+            <ul class="footer-links">
+                <li><a href="/about">About</a></li>
+                <li><a href="/report">Contact</a></li>
+                <li><a href="#">Privacy Policy</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        const navToggle = document.querySelector('.nav-toggle');
+        const navLinks = document.querySelector('.nav-links');
+        navToggle.addEventListener('click', () => {
+            navLinks.classList.toggle('active');
+        });
+
+        document.getElementById('upload-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const spinner = document.getElementById('spinner');
+            const output = document.getElementById('output');
+            const downloadLink = document.getElementById('download-link');
+            const resultCard = document.getElementById('result');
+
+            spinner.classList.add('visible');
+            output.innerHTML = '';
+            downloadLink.classList.remove('visible');
+            resultCard.classList.remove('visible');
+
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                if (result.image) {
+                    output.innerHTML = `<img src="${result.image}" alt="Detection Result" class="fade-in">`;
+                    downloadLink.href = result.image;
+                    downloadLink.classList.add('visible');
+                    resultCard.classList.add('visible');
+                } else if (result.video) {
+                    output.innerHTML = `<video width="100%" controls class="fade-in"><source src="${result.video}" type="video/mp4">Your browser does not support the video tag.</video>`;
+                    downloadLink.href = result.video;
+                    downloadLink.download = result.video.split('/').pop();
+                    downloadLink.classList.add('visible');
+                    resultCard.classList.add('visible');
+                    output.querySelector('video').load();
+                } else {
+                    output.innerHTML = `<p class="error">${result.error}</p>`;
+                    resultCard.classList.add('visible');
+                }
+            } catch (error) {
+                output.innerHTML = `<p class="error">An error occurred: ${error.message}. Please try again.</p>`;
+                resultCard.classList.add('visible');
+            } finally {
+                spinner.classList.remove('visible');
+            }
+        });
+    </script>
+</body>
+</html>
+
+realtime.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live PPE Monitoring - SafeWork</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='safety.png') }}" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='safety.png') }}" alt="Safety Helmet Logo">
+                <div class="logo-text">
+                    <h1>SafeWork</h1>
+                    <span class="tagline">Protecting Lives with Precision</span>
+                </div>
+            </div>
+            <button class="nav-toggle" aria-label="Toggle navigation">
+                <span class="hamburger"></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/realtime">Live Monitoring</a></li>
+                <li><a href="/about">About Us</a></li>
+                <li><a href="/report">Report Issue</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="hero-content">
+                <h2>Live PPE Monitoring</h2>
+                <p>Track safety compliance in real-time with AI-powered detection.</p>
+                <div class="realtime-card">
+                    <div class="video-container">
+                        <div class="video-wrapper">
+                            <h3>Raw Feed</h3>
+                            <video id="raw-feed" autoplay playsinline muted></video>
+                        </div>
+                        <div class="video-wrapper">
+                            <h3>Processed Feed</h3>
+                            <img id="processed-feed" alt="Processed Detection Feed">
+                        </div>
+                    </div>
+                    <button id="switch-camera">Switch Camera</button>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>© 2025 SafeWork Team. All rights reserved.</p>
+            <ul class="footer-links">
+                <li><a href="/about">About</a></li>
+                <li><a href="/report">Contact</a></li>
+                <li><a href="#">Privacy Policy</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        const socket = io.connect(location.protocol + '//' + location.host, {
+            transports: ['websocket'],
+            reconnection: true,
+            reconnectionAttempts: 5,
+            reconnectionDelay: 1000
+        });
+        const rawFeed = document.getElementById('raw-feed');
+        const processedFeed = document.getElementById('processed-feed');
+        const switchButton = document.getElementById('switch-camera');
+        let facingMode = 'user';
+        let canvas, ctx, video;
+        let lastFrameTime = 0;
+        const FRAME_INTERVAL = 500;
+
+        socket.on('connect', () => {
+            console.log('Connected to WebSocket server');
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Disconnected from WebSocket server');
+        });
+
+        socket.on('processed_frame', (data) => {
+            console.log('Received processed frame:', data.substring(0, 50));
+            processedFeed.src = data;
+            processedFeed.onerror = () => console.error('Failed to load image data in <img>');
+            processedFeed.onload = () => console.log('Processed image loaded successfully');
+        });
+
+        async function startLocalCamera() {
+            try {
+                if (video && video.srcObject) {
+                    video.srcObject.getTracks().forEach(track => track.stop());
+                }
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: facingMode, width: { ideal: 640 }, height: { ideal: 480 } }
+                });
+                video = rawFeed; // Use the <video> element for raw feed
+                video.srcObject = stream;
+
+                video.onloadedmetadata = () => {
+                    canvas = document.createElement('canvas');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    ctx = canvas.getContext('2d');
+                    console.log('Camera started:', facingMode);
+                    processLocalFeed();
+                };
+            } catch (err) {
+                console.error('Error accessing camera:', err);
+                alert('Could not access camera. Check permissions.');
+            }
+        }
+
+        function processLocalFeed(timestamp) {
+            if (timestamp - lastFrameTime >= FRAME_INTERVAL) {
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                const frameData = canvas.toDataURL('image/jpeg', 0.7);
+                socket.emit('frame', frameData);
+                console.log('Frame sent to server');
+                lastFrameTime = timestamp;
+            }
+            requestAnimationFrame(processLocalFeed);
+        }
+
+        switchButton.addEventListener('click', () => {
+            facingMode = facingMode === 'user' ? 'environment' : 'user';
+            switchButton.textContent = facingMode === 'user' ? 'Switch to Back Camera' : 'Switch to Front Camera';
+            startLocalCamera();
+        });
+
+        startLocalCamera();
+
+        const navToggle = document.querySelector('.nav-toggle');
+        const navLinks = document.querySelector('.nav-links');
+        navToggle.addEventListener('click', () => {
+            navLinks.classList.toggle('active');
+        });
+    </script>
+</body>
+</html>
+
+report.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Report Issue - SafeWork</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='safety.png') }}" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='safety.png') }}" alt="Safety Helmet Logo">
+                <div class="logo-text">
+                    <h1>SafeWork</h1>
+                    <span class="tagline">Protecting Lives with Precision</span>
+                </div>
+            </div>
+            <button class="nav-toggle" aria-label="Toggle navigation">
+                <span class="hamburger"></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/realtime">Live Monitoring</a></li>
+                <li><a href="/about">About Us</a></li>
+                <li><a href="/report">Report Issue</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="hero-content">
+                <h2>Report a Safety Issue</h2>
+                <p>Your Voice Fuels Our Mission</p>
+                <div class="upload-card">
+                    <form id="report-form" class="report-form">
+                        <div class="form-field">
+                            <input type="text" name="name" placeholder="Your Name" required class="form-input">
+                        </div>
+                        <div class="form-field">
+                            <input type="email" name="email" placeholder="Your Email" required class="form-input">
+                        </div>
+                        <div class="form-field">
+                            <textarea name="message" placeholder="Describe the issue..." required class="form-textarea"></textarea>
+                        </div>
+                        <button type="submit">Submit Report</button>
+                    </form>
+                    <div id="spinner" class="spinner" aria-hidden="true"></div>
+                    <div id="feedback" class="feedback"></div> <!-- New feedback div -->
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>© 2025 SafeWork Team. All rights reserved.</p>
+            <ul class="footer-links">
+                <li><a href="/about">About</a></li>
+                <li><a href="/report">Contact</a></li>
+                <li><a href="#">Privacy Policy</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        const navToggle = document.querySelector('.nav-toggle');
+        const navLinks = document.querySelector('.nav-links');
+        navToggle.addEventListener('click', () => {
+            navLinks.classList.toggle('active');
+        });
+
+        document.getElementById('report-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const spinner = document.getElementById('spinner');
+            const feedback = document.getElementById('feedback');
+
+            spinner.classList.add('visible');
+            feedback.innerHTML = ''; // Clear previous feedback
+
+            try {
+                const response = await fetch('/report', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await response.json();
+
+                spinner.classList.remove('visible');
+                if (response.ok) {
+                    feedback.innerHTML = '<p class="success fade-in">Report submitted successfully</p>';
+                    e.target.reset(); // Clear form
+                } else {
+                    feedback.innerHTML = '<p class="error fade-in">Report not submitted, try again.</p>';
+                }
+            } catch (error) {
+                spinner.classList.remove('visible');
+                feedback.innerHTML = '<p class="error fade-in">Report not submitted, try again.</p>';
+            }
+        });
+    </script>
+</body>
+</html>
+
+about.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About Us - SafeWork</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='safety.png') }}" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='safety.png') }}" alt="Safety Helmet Logo">
+                <div class="logo-text">
+                    <h1>SafeWork</h1>
+                    <span class="tagline">Protecting Lives with Precision</span>
+                </div>
+            </div>
+            <button class="nav-toggle" aria-label="Toggle navigation">
+                <span class="hamburger"></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/realtime">Live Monitoring</a></li>
+                <li><a href="/about">About Us</a></li>
+                <li><a href="/report">Report Issue</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="about">
+            <div class="about-header">
+                <h2>About SafeWork</h2>
+                <p>Ensuring safety on construction sites with advanced AI-powered PPE detection.</p>
+            </div>
+
+            <div class="about-content">
+                <h3>Our Mission</h3>
+                <p>At SafeWork, we aim to revolutionize workplace safety by leveraging cutting-edge technology to detect Personal Protective Equipment (PPE) compliance in real-time. Our goal is to reduce accidents, ensure regulatory compliance, and protect lives with precision and efficiency.</p>
+
+                <h3>What We Do</h3>
+                <p>SafeWork provides an AI-driven solution to monitor and enforce PPE usage, such as helmets, vests, gloves, and safety goggles, through image and video analysis. Whether it’s live monitoring via cameras or analyzing uploaded media, our system delivers accurate and actionable insights.</p>
+
+                <h3>Our Technology</h3>
+                <p>Our system is powered by the state-of-the-art <strong>YOLOv8</strong> object detection model, fine-tuned to identify PPE with high accuracy. Integrated with a user-friendly web interface, SafeWork combines machine learning and real-time processing to meet industry safety standards.</p>
+                <ul class="tech-details">
+                    <li><strong>Model:</strong> YOLOv8 (You Only Look Once, Version 8)</li>
+                    <li><strong>Dataset:</strong> Custom-built dataset with over 10,000 labeled images of PPE instances</li>
+                    <li><strong>Training Epochs:</strong> 50 epochs with early stopping</li>
+                    <li><strong>Accuracy:</strong> 90% mAP (mean Average Precision) on validation set</li>
+                    <li><strong>Processing Speed:</strong> Real-time detection at 30 FPS on compatible hardware</li>
+                    <li><strong>Supported PPE:</strong> Helmets, vests, gloves, goggles, and boots</li>
+                </ul>
+
+                <h3>Our Journey</h3>
+                <p>SafeWork began as a passion project by a team of five innovators determined to address the critical issue of workplace safety. After months of data collection, model training, and frontend/backend development, we launched our first prototype in early 2025. Since then, we’ve been refining our technology to meet the needs of construction firms, safety inspectors, and workers worldwide.</p>
+
+                <h3>Meet the Team</h3>
+                <div class="team-grid">
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='saptarshi.jpg') }}" alt="Saptarshi Ghosh" class="team-photo">
+                        <h4>Saptarshi Ghosh</h4>
+                        <p><strong>Role:</strong> Frontend & Backend Developer</p>
+                        <p>Mastermind behind the sleek UI and robust server-side logic. Saptarshi ensures SafeWork is both functional and visually appealing.</p>
+                    </div>
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='mangaldip.jpg') }}" alt="Mangaldip Dhua" class="team-photo">
+                        <h4>Mangaldip Dhua</h4>
+                        <p><strong>Role:</strong> System Integrator</p>
+                        <p>Brings all components together, ensuring seamless integration of AI models with the web platform.</p>
+                    </div>
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='uday.jpg') }}" alt="Uday Sankar De" class="team-photo">
+                        <h4>Uday Sankar De</h4>
+                        <p><strong>Role:</strong> Model Training Specialist</p>
+                        <p>Trained and optimized the YOLOv8 model to achieve top-tier PPE detection accuracy.</p>
+                    </div>
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='arnab.jpg') }}" alt="Arnab Subhra Ghosh" class="team-photo">
+                        <h4>Arnab Subhra Ghosh</h4>
+                        <p><strong>Role:</strong> Testing & QA Lead</p>
+                        <p>Ensures SafeWork is bug-free and performs reliably under all conditions.</p>
+                    </div>
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='sumit.jpg') }}" alt="Sumit Chaira" class="team-photo">
+                        <h4>Sumit Chaira</h4>
+                        <p><strong>Role:</strong> Data Collection & Preprocessing</p>
+                        <p>Curated and labeled the dataset that powers our AI, ensuring high-quality training data.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>© 2025 SafeWork Team. All rights reserved.</p>
+            <ul class="footer-links">
+                <li><a href="/about">About</a></li>
+                <li><a href="/report">Contact</a></li>
+                <li><a href="#">Privacy Policy</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        const navToggle = document.querySelector('.nav-toggle');
+        const navLinks = document.querySelector('.nav-links');
+        navToggle.addEventListener('click', () => {
+            navLinks.classList.toggle('active');
+        });
+    </script>
+</body>
+</html>
+
+styles.css
+/* ==========================================================================
+   General Styles
+   ========================================================================== */
+   * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Poppins', sans-serif;
+}
+
+body {
+    background: #f5f6fa;
+    color: #333;
+    line-height: 1.6;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ==========================================================================
+   Header and Navigation (Unchanged)
+   ========================================================================== */
+header {
+    background: linear-gradient(135deg, #2b6cb0, #1a4971);
+    padding: 1.5rem 2rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+}
+
+.navbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 1300px;
+    margin: 0 auto;
+}
+
+.logo{
+    display: flex;
+    gap: 0.3rem;
+}
+
+.logo img {
+    width: 50px; /* Reduced from 63px */
+    height: 56px; /* Reduced from 63px */
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.1));
+}
+
+.logo h1 {
+    color: #fff;
+    font-size: 1.4rem; /* Reduced from 2rem */
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.tagline {
+    color: #ed8936;
+    font-size: 0.8rem; /* Reduced from 0.95rem */
+    font-weight: 400;
+    letter-spacing: 0.5px;
+}
+
+
+.nav-links {
+    list-style: none;
+    display: flex;
+    gap: 2rem;
+}
+
+.nav-links a {
+    color: #fff;
+    text-decoration: none;
+    font-size: 1.1rem;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border-radius: 25px;
+    transition: background 0.3s ease, color 0.3s ease;
+}
+
+.nav-links a:hover {
+    background: #ed8936;
+    color: #fff;
+}
+
+.nav-toggle {
+    display: none;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+
+.hamburger {
+    display: block;
+    width: 32px;
+    height: 3px;
+    background: #fff;
+    position: relative;
+    transition: all 0.3s ease;
+}
+
+.hamburger::before,
+.hamburger::after {
+    content: '';
+    position: absolute;
+    width: 100%;
+    height: 3px;
+    background: #fff;
+    transition: all 0.3s ease;
+}
+
+.hamburger::before {
+    top: -10px;
+}
+
+.hamburger::after {
+    bottom: -10px;
+}
+
+/* ==========================================================================
+   Main Content
+   ========================================================================== */
+main {
+    flex: 1;
+    padding: 3rem 1rem;
+}
+
+.hero {
+    max-width: 1000px;
+    margin: 0 auto;
+    background: #ffffff00;
+    border-radius: 10px;
+    /* box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05); */
+    padding: 3rem;
+}
+
+.hero-content {
+    text-align: center;
+}
+
+.hero h2 {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #2b6cb0;
+    margin-bottom: 1rem;
+}
+
+.hero p {
+    font-size: 1.1rem;
+    color: #666;
+    margin-bottom: 2rem;
+}
+
+.upload-card {
+    background: #fafafa00;
+    padding: 2rem;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem; /* Already exists, but ensuring it applies */
+}
+
+.custom-file-upload {
+    padding: 0.8rem 2rem;
+    margin-right: 1rem;
+    background: #2b6cb0;
+    color: #fff;
+    border-radius: 6px;
+
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.3s ease;
+    margin-bottom: 1rem; /* Added padding between buttons */
+}
+
+button {
+    padding: 0.8rem 2rem;
+    background: #ed8936;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.custom-file-upload:hover {
+    background: #1a4971;
+}
+
+.custom-file-upload input[type="file"] {
+    display: none;
+}
+
+
+
+button:hover {
+    background: #c05621;
+}
+
+.spinner {
+    display: none;
+    width: 36px;
+    height: 36px;
+    border: 4px solid #ddd;
+    border-top: 4px solid #ed8936;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.spinner.visible {
+    display: block;
+}
+
+.result-card {
+    display: none;
+    background: #fafafa;
+    padding: 2rem;
+    border-radius: 8px;
+    margin-top: 2rem;
+}
+
+.result-card.visible {
+    display: block;
+    animation: fadeIn 0.5s ease forwards;
+}
+
+.result-card h3 {
+    font-size: 1.6rem;
+    font-weight: 600;
+    color: #2b6cb0;
+    margin-bottom: 1rem;
+}
+
+#output img,
+#output video {
+    max-width: 100%;
+    border-radius: 6px;
+    margin-top: 1rem;
+}
+
+.download-btn {
+    display: none;
+    padding: 0.7rem 1.5rem;
+    background: #2b6cb0;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-top: 1.5rem;
+    transition: background 0.3s ease;
+}
+
+.download-btn.visible {
+    display: inline-block;
+}
+
+.download-btn:hover {
+    background: #1a4971;
+}
+
+.error {
+    color: #d32f2f;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+/* ==========================================================================
+   Animations
+   ========================================================================== */
+   @keyframes slideIn {
+    from { transform: translateY(-50px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes slideUp {
+    from { transform: translateY(30px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes popIn {
+    0% { transform: scale(0.8); opacity: 0; }
+    80% { transform: scale(1.05); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+.animate-slide-in { animation: slideIn 0.8s ease-out; }
+.animate-fade-in { animation: fadeIn 1s ease-out; }
+.animate-slide-up { animation: slideUp 0.8s ease-out; }
+.animate-pop-in { animation: popIn 0.5s ease-out; }
+
+/* ==========================================================================
+   About Page Design (about.html)
+   ========================================================================== */
+.about {
+    max-width: 1300px;
+    margin: 0 auto;
+    padding: 4rem 2rem;
+    background: linear-gradient(135deg, #ffffff, #f5f6fa);
+    border-radius: 15px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    position: relative;
+}
+
+.about-header {
+    text-align: center;
+    margin-bottom: 4rem;
+    padding: 2rem;
+    background: linear-gradient(135deg, #2b6cb0, #ed8936);
+    color: #fff;
+    border-radius: 15px 15px 0 0;
+}
+
+.gradient-text {
+    background: linear-gradient(90deg, #ff6200, #ed8936, #ff6200);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-size: 3.5rem;
+    font-family: 'Roboto Slab', serif;
+    font-weight: 700;
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.subheading {
+    font-size: 1.4rem;
+    font-weight: 400;
+    color: #e2e8f0;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.about-content {
+    padding: 0 2rem;
+}
+
+.content-block {
+    margin-bottom: 3rem;
+}
+
+.fancy-title {
+    font-family: 'Roboto Slab', serif;
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: #2b6cb0;
+    position: relative;
+    display: inline-block;
+    margin-bottom: 1.5rem;
+}
+
+.fancy-title::after {
+    content: '';
+    position: absolute;
+    bottom: -8px;
+    left: 0;
+    width: 50%;
+    height: 4px;
+    background: linear-gradient(90deg, #ed8936, #ff6200);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+}
+
+.fancy-title:hover::after {
+    width: 100%;
+}
+
+.about-content p {
+    color: #444;
+    font-size: 1.2rem;
+    line-height: 1.8;
+    margin-bottom: 1.5rem;
+}
+
+.highlight {
+    background: linear-gradient(90deg, #ff6200, #ed8936);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 700;
+}
+
+.tech-details {
+    list-style: none;
+    margin-left: 2rem;
+    color: #333;
+    font-size: 1.1rem;
+}
+
+.tech-details li {
+    margin-bottom: 1rem;
+    position: relative;
+    padding-left: 1.5rem;
+    transition: transform 0.3s ease;
+}
+
+.tech-details li:hover {
+    transform: translateX(10px);
+}
+
+.tech-details li::before {
+    content: "➤";
+    color: #ed8936;
+    position: absolute;
+    left: 0;
+    font-size: 1.2rem;
+}
+
+.team-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 2.5rem;
+    margin-top: 2rem;
+}
+
+.team-member {
+    text-align: center;
+    padding: 2rem;
+    background: #fff;
+    border-radius: 15px;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.team-member:hover {
+    transform: translateY(-10px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+}
+
+.team-photo {
+    width: 160px;
+    height: 160px;
+    border-radius: 50%;
+    object-fit: cover;
+    margin-bottom: 1.5rem;
+    border: 5px solid #ed8936;
+    transition: transform 0.3s ease;
+}
+
+.team-member:hover .team-photo {
+    transform: scale(1.1);
+}
+
+.team-name {
+    font-family: 'Roboto Slab', serif;
+    font-size: 1.6rem;
+    color: #ff6200;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+}
+
+.team-role {
+    font-size: 1.1rem;
+    color: #2b6cb0;
+    font-weight: 600;
+    margin-bottom: 0.8rem;
+}
+
+.team-member p {
+    font-size: 1rem;
+    color: #666;
+}
+
+/* ==========================================================================
+   Realtime Page Design (realtime.html)
+   ========================================================================== */
+   .realtime-card {
+    background: #fafafa;
+    padding: 2rem;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    width: 100%;
+    max-width: 1200px; /* Wider container for side-by-side layout */
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+}
+
+.video-container {
+    display: flex;
+    justify-content: center;
+    gap: 2rem;
+    width: 100%;
+}
+
+.video-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.video-wrapper h3 {
+    color: #ff6200;
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+#raw-feed,
+#processed-feed {
+    width: 100%;
+    max-width: 480px; /* Smaller size for both feeds */
+    height: auto;
+    border-radius: 6px;
+    border: 2px solid #ff6200;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+    display: block;
+    object-fit: contain; /* Maintain aspect ratio */
+}
+
+#switch-camera {
+    padding: 0.8rem 2rem;
+    background: #ed8936;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+#switch-camera:hover {
+    background: #c05621;
+}
+
+/* Responsive Design for Mobile */
+@media (max-width: 768px) {
+    .realtime-card {
+        padding: 1.5rem;
+        max-width: 100%;
+    }
+
+    .video-container {
+        flex-direction: column; /* Stack vertically on mobile */
+        gap: 1.5rem;
+    }
+
+    #raw-feed,
+    #processed-feed {
+        max-width: 320px; /* Even smaller size for mobile */
+    }
+
+    #switch-camera {
+        padding: 0.8rem 1.5rem;
+        width: 100%;
+        max-width: 200px;
+    }
+}
+
+@media (max-width: 480px) {
+    .realtime-card {
+        padding: 1rem;
+    }
+
+    #raw-feed,
+    #processed-feed {
+        max-width: 280px; /* Smallest size for very small screens */
+    }
+
+    #switch-camera {
+        padding: 0.6rem 1rem;
+        font-size: 0.9rem;
+    }
+}
+
+/* ==========================================================================
+   Report Page Design (report.html)
+   ========================================================================== */
+
+/* Hero Section */
+
+
+/* Hero Content */
+.hero-content h2 {
+    font-size: 2.5rem;
+    color: #333;
+    margin-bottom: 0.5rem;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 700;
+}
+
+.hero-content p {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 2rem;
+    font-family: 'Poppins', sans-serif;
+}
+
+/* Form Card (Similar to Upload Card in index.html) */
+.upload-card {
+    background: #fff;
+    padding: 2rem;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    max-width: 500px;
+    margin: 0 auto;
+    transition: transform 0.3s ease;
+}
+
+.upload-card:hover {
+    transform: translateY(-5px);
+}
+
+/* Form Fields */
+.form-field {
+    margin-bottom: 1.5rem;
+}
+
+input[type="text"],
+input[type="email"],
+textarea {
+    padding: 0.8rem;
+    border: 2px solid #ff6200;
+    border-radius: 5px;
+    font-size: 1.1rem;
+    width: 100%;
+    max-width: 400px;
+    font-family: 'Poppins', sans-serif;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+input[type="text"]:focus,
+input[type="email"]:focus,
+textarea:focus {
+    border-color: #e55a00;
+    box-shadow: 0 0 8px rgba(255, 98, 0, 0.3);
+    outline: none;
+}
+
+textarea {
+    height: 150px;
+    resize: vertical;
+}
+
+/* Submit Button */
+.upload-card button {
+    background: #ff6200;
+    color: #fff;
+    padding: 0.8rem 2rem;
+    border: none;
+    border-radius: 5px;
+    font-size: 1.1rem;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.3s ease, transform 0.2s ease;
+}
+
+.upload-card button:hover {
+    background: #e55a00;
+    transform: scale(1.05);
+}
+
+.upload-card button:active {
+    transform: scale(0.95);
+}
+
+/* Spinner */
+.spinner {
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #ff6200;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    animation: spin 1s linear infinite;
+    margin: 1rem auto;
+    display: none;
+}
+
+.spinner.visible {
+    display: block;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Feedback Messages */
+.feedback {
+    margin-top: 1rem;
+    text-align: center;
+    font-family: 'Poppins', sans-serif;
+    font-size: 1.1rem;
+}
+
+/* Success and Error Messages */
+.success {
+    color: #388e3c;
+    font-weight: bold;
+    font-family: 'Poppins', sans-serif;
+}
+
+.error {
+    color: #d32f2f;
+    font-weight: bold;
+    font-family: 'Poppins', sans-serif;
+}
+
+/* Ensure spinner and feedback don’t overlap */
+.spinner.visible + .feedback {
+    display: none;
+}
+
+/* Fade-in Animation */
+.fade-in {
+    animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* ==========================================================================
+   Footer
+   ========================================================================== */
+footer {
+    background: #2b6cb0;
+    color: #fff;
+    padding: 1.5rem;
+    margin-top: auto;
+}
+
+.footer-content {
+    max-width: 1000px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.footer-links {
+    list-style: none;
+    display: flex;
+    gap: 1.5rem;
+}
+
+.footer-links a {
+    color: #fff;
+    text-decoration: none;
+    font-size: 0.95rem;
+    font-weight: 500;
+    transition: color 0.3s ease;
+}
+
+.footer-links a:hover {
+    color: #ed8936;
+}
+
+/* ==========================================================================
+   Animations
+   ========================================================================== */
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.fade-in {
+    animation: fadeIn 0.5s ease forwards;
+}
+
+/* ==========================================================================
+   Responsive Design
+   ========================================================================== */
+@media (max-width: 768px) {
+    .navbar {
+        flex-wrap: wrap;
+        padding: 1rem;
+    }
+
+    .nav-toggle {
+        display: block;
+    }
+
+    .nav-links {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        text-align: center;
+        padding: 1.5rem 0;
+        background: #1a4971;
+        border-radius: 0 0 10px 10px;
+    }
+
+    .nav-links.active {
+        display: flex;
+    }
+
+    .nav-links a {
+        padding: 0.8rem;
+    }
+
+    .hero {
+        padding: 2rem;
+    }
+
+    .hero h2 {
+        font-size: 2rem;
+    }
+
+    .hero p {
+        font-size: 1rem;
+    }
+
+    .upload-card,
+    .result-card {
+        padding: 1.5rem;
+    }
+
+    .footer-content {
+        flex-direction: column;
+        text-align: center;
+    }
+}
+
+
+
+
+

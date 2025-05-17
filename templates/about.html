@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About Us - SafeWork</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='safety.png') }}" type="image/png">
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <nav class="navbar">
+            <div class="logo">
+                <img src="{{ url_for('static', filename='safety.png') }}" alt="Safety Helmet Logo">
+                <div class="logo-text">
+                    <h1>SafeWork</h1>
+                    <span class="tagline">Protecting Lives with Precision</span>
+                </div>
+            </div>
+            <button class="nav-toggle" aria-label="Toggle navigation">
+                <span class="hamburger"></span>
+            </button>
+            <ul class="nav-links">
+                <li><a href="/">Home</a></li>
+                <li><a href="/realtime">Live Monitoring</a></li>
+                <li><a href="/about">About Us</a></li>
+                <li><a href="/report">Report Issue</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="about">
+            <div class="about-header">
+                <h2>About SafeWork</h2>
+                <p>Ensuring safety on construction sites with advanced AI-powered PPE detection.</p>
+            </div>
+
+            <div class="about-content">
+                <h3>Our Mission</h3>
+                <p>At SafeWork, we aim to revolutionize workplace safety by leveraging cutting-edge technology to detect Personal Protective Equipment (PPE) compliance in real-time. Our goal is to reduce accidents, ensure regulatory compliance, and protect lives with precision and efficiency.</p>
+
+                <h3>What We Do</h3>
+                <p>SafeWork provides an AI-driven solution to monitor and enforce PPE usage, such as helmets, vests, gloves, and safety goggles, through image and video analysis. Whether it’s live monitoring via cameras or analyzing uploaded media, our system delivers accurate and actionable insights.</p>
+
+                <h3>Our Technology</h3>
+                <p>Our system is powered by the state-of-the-art <strong>YOLOv8</strong> object detection model, fine-tuned to identify PPE with high accuracy. Integrated with a user-friendly web interface, SafeWork combines machine learning and real-time processing to meet industry safety standards.</p>
+                <ul class="tech-details">
+                    <li><strong>Model:</strong> YOLOv8 (You Only Look Once, Version 8)</li>
+                    <li><strong>Dataset:</strong> Custom-built dataset with over 10,000 labeled images of PPE instances</li>
+                    <li><strong>Training Epochs:</strong> 50 epochs with early stopping</li>
+                    <li><strong>Accuracy:</strong> 90% mAP (mean Average Precision) on validation set</li>
+                    <li><strong>Processing Speed:</strong> Real-time detection at 30 FPS on compatible hardware</li>
+                    <li><strong>Supported PPE:</strong> Helmets, vests, gloves, goggles, and boots</li>
+                </ul>
+
+                <h3>Our Journey</h3>
+                <p>SafeWork began as a passion project by a team of five innovators determined to address the critical issue of workplace safety. After months of data collection, model training, and frontend/backend development, we launched our first prototype in early 2025. Since then, we’ve been refining our technology to meet the needs of construction firms, safety inspectors, and workers worldwide.</p>
+
+                <h3>Meet the Team</h3>
+                <div class="team-grid">
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='saptarshi.jpg') }}" alt="Saptarshi Ghosh" class="team-photo">
+                        <h4>Saptarshi Ghosh</h4>
+                        <p><strong>Role:</strong> Frontend & Backend Developer</p>
+                        <p>Mastermind behind the sleek UI and robust server-side logic. Saptarshi ensures SafeWork is both functional and visually appealing.</p>
+                    </div>
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='mangaldip.jpg') }}" alt="Mangaldip Dhua" class="team-photo">
+                        <h4>Mangaldip Dhua</h4>
+                        <p><strong>Role:</strong> System Integrator</p>
+                        <p>Brings all components together, ensuring seamless integration of AI models with the web platform.</p>
+                    </div>
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='uday.jpg') }}" alt="Uday Sankar De" class="team-photo">
+                        <h4>Uday Sankar De</h4>
+                        <p><strong>Role:</strong> Model Training Specialist</p>
+                        <p>Trained and optimized the YOLOv8 model to achieve top-tier PPE detection accuracy.</p>
+                    </div>
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='arnab.jpg') }}" alt="Arnab Subhra Ghosh" class="team-photo">
+                        <h4>Arnab Subhra Ghosh</h4>
+                        <p><strong>Role:</strong> Testing & QA Lead</p>
+                        <p>Ensures SafeWork is bug-free and performs reliably under all conditions.</p>
+                    </div>
+                    <div class="team-member">
+                        <img src="{{ url_for('static', filename='sumit.jpg') }}" alt="Sumit Chaira" class="team-photo">
+                        <h4>Sumit Chaira</h4>
+                        <p><strong>Role:</strong> Data Collection & Preprocessing</p>
+                        <p>Curated and labeled the dataset that powers our AI, ensuring high-quality training data.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>© 2025 SafeWork Team. All rights reserved.</p>
+            <ul class="footer-links">
+                <li><a href="/about">About</a></li>
+                <li><a href="/report">Contact</a></li>
+                <li><a href="#">Privacy Policy</a></li>
+            </ul>
+        </div>
+    </footer>
+
+    <script>
+        const navToggle = document.querySelector('.nav-toggle');
+        const navLinks = document.querySelector('.nav-links');
+        navToggle.addEventListener('click', () => {
+            navLinks.classList.toggle('active');
+        });
+    </script>
+</body>
+</html>
